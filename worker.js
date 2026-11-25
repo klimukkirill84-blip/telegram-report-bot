@@ -30,12 +30,12 @@ async function send(env, chatId, text) {
 }
 
 function parseReport(text) {
-  const parts = text.trim().split(/\\s+/);
+  const parts = text.trim().split(/\s+/);
   if (parts.length < 3) return null;
   const target = parts[1];
   const reasonKey = parts[2].toLowerCase();
   const evidence = parts.slice(3).join(" ").trim();
-  if (!/^(@[a-zA-Z0-9_]{5,32}|https?:\\/\\/t\\.me\\/[a-zA-Z0-9_+/-]+)$/.test(target)) return null;
+  if (!/^(@[a-zA-Z0-9_]{5,32}|https?:\/\/t\\.me\/[a-zA-Z0-9_+/-]+)$/.test(target)) return null;
   if (!REASONS[reasonKey]) return null;
   return {target, reason: REASONS[reasonKey], evidence: evidence || "Не указаны"};
 }
@@ -44,7 +44,7 @@ async function handleMessage(env, message) {
   if (!message?.text) return;
   const chatId = message.chat.id;
   const text = message.text.trim();
-  const command = text.split(/\\s+/)[0].split("@")[0].toLowerCase();
+  const command = text.split(/\s+/)[0].split("@")[0].toLowerCase();
 
   if (command === "/start" || command === "/help") {
     await send(env, chatId,
