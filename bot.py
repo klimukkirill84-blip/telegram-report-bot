@@ -148,11 +148,83 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-def main():
-    if not TOKEN:
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+PUBLIC_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+
+telegram_app = Application.builder().token(TOKEN).build() if TOKEN else None
+
+conversation = ConversationHandler(
+    entry_points=[CommandHandler("report", report_start)],
+    states={
+        TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, target_received)],
+        REASON: [CallbackQueryHandler(reason_received, pattern="^(spam|scam|threats|impersonation|other)$")],
+        EVIDENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, evidence_received)],
+        CONFIRM: [CallbackQueryHandler(confirm_received, pattern="^(save|discard)$")],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+    per_user=True,
+    per_chat=True,
+)
+
+if telegram_app:
+    telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("history", history))
+    telegram_app.add_handler(conversation)
+    telegram_app.add_handler(CommandHandler("cancel", cancel))
+
+
+@asynccontextmanager
+async def lifespan(api: FastAPI):
+    if not TOKEN or not telegram_app:
         raise RuntimeError("Не задана переменная окружения BOT_TOKEN.")
+    if not PUBLIC_URL:
+        raise RuntimeError("Render не передал RENDER_EXTERNAL_URL.")
+    if not WEBHOOK_SECRET:
+        raise RuntimeError("Не задана переменная окружения WEBHOOK_SECRET.")
     init_db()
-    app = Application.builder().token(TOKEN).build()
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.bot.set_webhook(
+        url=f"{PUBLIC_URL}/telegram",
+        secret_token=WEBHOOK_SECRET,
+        allowed_updates=Update.ALL_TYPES,
+    )
+    yield
+    await telegram_app.bot.delete_webhook()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
+
+api = FastAPI(lifespan=lifespan)
+
+
+@api.get("/")
+async def health():
+    return {"status": "ok", "service": "telegram-report-bot"}
+
+
+@api.post("/telegram")
+async def telegram_webhook(request: Request):
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    payload = await request.json()
+    update = Update.de_json(payload, telegram_app.bot)
+    await telegram_app.update_queue.put(update)
+    return JSONResponse({"ok": True})
+
+
+def main():
+    import uvicorn
+    uvicorn.run("bot:api", host="0.0.0.0", port=int(os.environ.get("PORT", "10000")))
+
+
+if __name__ == "__main__":
+    main()
+
     conversation = ConversationHandler(
         entry_points=[CommandHandler("report", report_start)],
         states={
