@@ -88,6 +88,26 @@ export default {
     if (request.method === "GET" && url.pathname === "/") {
       return Response.json({status:"ok", service:"telegram-report-bot"});
     }
+    if (request.method === "GET" && url.pathname === "/setup") {
+      if (!env.BOT_TOKEN || !env.WEBHOOK_SECRET) {
+        return Response.json({ok:false, error:"Add BOT_TOKEN and WEBHOOK_SECRET in Worker Settings > Variables and Secrets, then visit /setup again."}, {status:500});
+      }
+      const webhookUrl = `${url.origin}/telegram`;
+      const result = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`, {
+        method: "POST",
+        headers: {"content-type":"application/json"},
+        body: JSON.stringify({
+          url: webhookUrl,
+          secret_token: env.WEBHOOK_SECRET,
+          allowed_updates: ["message"]
+        })
+      });
+      const data = await result.json();
+      if (!result.ok || !data.ok) {
+        return Response.json({ok:false, telegram:data}, {status:502});
+      }
+      return Response.json({ok:true, message:"Telegram webhook registered. Open your bot in Telegram and send /start."});
+    }
     if (request.method !== "POST" || url.pathname !== "/telegram") {
       return new Response("Not found", {status:404});
     }
